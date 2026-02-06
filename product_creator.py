@@ -30,21 +30,27 @@ def get_stock_location_id():
     return loc[0]["id"]
 
 def get_uom_id(logical_name):
+    """
+    Map logical names to actual Odoo UoM names
+    """
     mapping = {
-        "Liter": ["L"],
-        "Kilogram": ["kg"],
+        "Liter": "L",
+        "Kilogram": "kg",
     }
 
-    for name in mapping.get(logical_name, []):
-        ids = odoo.call(
-            "uom.uom",
-            "search",
-            [[("name", "=", name)]]
-        )
-        if ids:
-            return ids[0]
+    odoo_name = mapping.get(logical_name)
+    if not odoo_name:
+        raise Exception(f"Unsupported UoM logical name: {logical_name}")
 
-    raise Exception(f"UoM not found for: {logical_name}")
+    ids = odoo.call(
+        "uom.uom",
+        "search",
+        [[("name", "=", odoo_name)]]
+    )
+    if not ids:
+        raise Exception(f"uom.uom not found in Odoo: {odoo_name}")
+
+    return ids[0]
 
 # -------------------------
 # Product creation
