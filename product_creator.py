@@ -29,6 +29,23 @@ def get_stock_location_id():
         raise Exception("Markw/Stock location not found")
     return loc[0]["id"]
 
+def get_uom_id(logical_name):
+    mapping = {
+        "Liter": ["L"],
+        "Kilogram": ["kg"],
+    }
+
+    for name in mapping.get(logical_name, []):
+        ids = odoo.call(
+            "uom.uom",
+            "search",
+            [[("name", "=", name)]]
+        )
+        if ids:
+            return ids[0]
+
+    raise Exception(f"UoM not found for: {logical_name}")
+
 # -------------------------
 # Product creation
 # -------------------------
