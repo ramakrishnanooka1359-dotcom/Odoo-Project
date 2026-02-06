@@ -60,6 +60,17 @@ def create_product_template(product_name, uom_name):
     pack_attr_id = get_id("product.attribute", "name", "Pack Size")
     uom_id = get_uom_id(uom_name)
 
+    # Decide variant values based on product
+    if product_name.lower() == "milk":
+        pack_values = ["250 ml", "500 ml", "1 L"]
+    else:  # curd & ghee
+        pack_values = ["250 g", "500 g", "1 kg"]
+
+    value_ids = [
+        get_id("product.attribute.value", "name", v)
+        for v in pack_values
+    ]
+
     template_id = odoo.call(
         "product.template",
         "create",
@@ -71,23 +82,18 @@ def create_product_template(product_name, uom_name):
             "uom_po_id": uom_id,
             "attribute_line_ids": [(0, 0, {
                 "attribute_id": pack_attr_id,
-                "value_ids": [(6, 0, [
-                    get_id("product.attribute.value", "name", "250 ml"),
-                    get_id("product.attribute.value", "name", "500 ml"),
-                    get_id("product.attribute.value", "name", "1 L")
-                ])]
+                "value_ids": [(6, 0, value_ids)]
             })]
         }]
     )
 
-    set_variant_prices(template_id)
+    set_variant_prices_and_stock(template_id, product_name)
     return template_id
 
 # -------------------------
 # Variant pricing
 # -------------------------
-
-def set_variant_prices(template_id):
+def set_variant_prices_and_stock(template_id, product_name):
     variants = odoo.call(
         "product.product",
         "search_read",
@@ -95,17 +101,41 @@ def set_variant_prices(template_id):
         {"fields": ["id", "name"]}
     )
 
+    location_id = get_stock_location_id()
+
     for v in variants:
-        if "250" in v["name"]:
-            price = 20
-        elif "500" in v["name"]:
-            price = 40
-        else:
-            price = 80
+        name = v["name"]
+
+        # -------- Pricing --------
+        if product_name.lower() == "milk":
+            if "250" in name:
+                price = 20
+            elif "500" in name:
+                price = 40
+            else:
+                price = 80
+        else:  # curd & ghee
+            if "250" in name:
+                price = 100
+            elif "500" in name:
+                price = 200
+            else:
+                price = 400
 
         odoo.call(
             "product.product",
             "write",
             [[v["id"]], {"lst_price": price}]
+        )
+
+        # -------- Stock (100 units) --------
+        odoo.call(
+            "stock.quant",
+            "create",
+            [{
+                "product_id": v["id"],
+                "location_id": location_id,
+                "quantity": 100,
+            }]
         )
 
