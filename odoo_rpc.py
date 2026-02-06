@@ -19,9 +19,18 @@ class OdooRPC:
             },
             "id": 1
         }
-        response = requests.post(f"{self.url}/jsonrpc", json=payload).json()
+
+        response = requests.post(
+            f"{self.url}/jsonrpc",
+            json=payload
+        ).json()
+
+        print("🔍 AUTH RESPONSE FROM ODOO:")
+        print(response)
+
         if not response.get("result"):
             raise Exception("❌ Odoo login failed")
+
         return response["result"]
 
     def call(self, model, method, args, kwargs=None):
