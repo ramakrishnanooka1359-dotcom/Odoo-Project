@@ -95,16 +95,21 @@ def create_product_template(product_name, uom_name):
 # Variant pricing
 # -------------------------
 def set_variant_prices_and_stock(template_id, product_name):
-    # Try a few times to fetch variants because Odoo may generate them
-    # immediately after creating the template.
     attempts = 5
     variants = []
+
     for _ in range(attempts):
         variants = odoo.call(
             "product.product",
             "search_read",
             [[("product_tmpl_id", "=", template_id)]],
-            {"fields": ["id", "name", "attribute_value_ids"]}
+            {
+                "fields": [
+                    "id",
+                    "name",
+                    "product_template_attribute_value_ids"
+                ]
+            }
         )
         if variants:
             break
@@ -116,76 +121,67 @@ def set_variant_prices_and_stock(template_id, product_name):
     location_id = get_stock_location_id()
 
     for v in variants:
-        # Prefer attribute values; fall back to the variant name.
-        attr_ids = v.get("attribute_value_ids") or []
-        attr_names = []
+        attr_ids = v.get("product_template_attribute_value_ids") or []
 
-        if attr_ids:
-            vals = odoo.call(
-                "product.attribute.value",
-                "read",
-                [attr_ids],
-                {"fields": ["name"]}
-            )
-            attr_names = [x.get("name", "").lower().replace(" ", "") for x in vals]
+        vals = odoo.call(
+            "product.template.attribute.value",
+            "read",
+            [attr_ids],
+            {"fields": ["name"]}
+        )
 
-        if not attr_names:
-            # fallback to the product name
-            attr_names = [v.get("name", "").lower().replace(" ", "")]
+        names = [x["name"].lower() for x in vals]
 
-        # Identify size by checking for digits like 250, 500, or '1' (for 1L/1kg)
-        has_250 = any("250" in n for n in attr_names)
-        has_500 = any("500" in n for n in attr_names)
-        has_1 = any(n.startswith("1") or "1l" in n or "1kg" in n for n in attr_names)
+        has_250 = any("250" in n for n in names)
+        has_500 = any("500" in n for n in names)
+        has_1kg_l = any("1" in n for n in names)
 
-        # -------- Pricing based on attribute values --------
         pname = product_name.lower()
+
+        # -------- PRICING --------
         if pname == "milk":
             if has_250:
                 price = 20
             elif has_500:
                 price = 40
-            elif has_1:
-                price = 80
             else:
-                price = 0
+                price = 80
+
         elif pname == "curd":
-            # Curd pricing: 250 -> 20, 500 -> 40, 1kg -> 80
             if has_250:
                 price = 20
             elif has_500:
                 price = 40
-            elif has_1:
-                price = 80
             else:
-                price = 0
+                price = 80
+
         elif pname == "ghee":
-            # Keep existing (higher) pricing for ghee
             if has_250:
                 price = 100
             elif has_500:
                 price = 200
-            elif has_1:
-                price = 400
             else:
-                price = 0
+                price = 400
         else:
             price = 0
 
+        # Set price
         odoo.call(
             "product.product",
             "write",
             [[v["id"]], {"lst_price": price}]
         )
 
-        # -------- Stock (100 units) --------
+        # -------- STOCK = 100 --------
         odoo.call(
             "stock.quant",
             "create",
             [{
                 "product_id": v["id"],
                 "location_id": location_id,
-                "quantity": 100,
+                "quantity": 100
             }]
         )
+
+        print(f"✅ {product_name} | {names} | ₹{price} | Stock=100")
 
