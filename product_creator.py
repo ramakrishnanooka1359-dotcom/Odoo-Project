@@ -58,7 +58,7 @@ def get_uom_id(logical_name):
 
 def create_product_template(product_name, uom_name):
     pack_attr_id = get_id("product.attribute", "name", "Pack Size")
-    uom_id = get_id("uom.uom", "name", uom_name)
+    uom_id = get_uom_id(uom_name)
 
     template_id = odoo.call(
         "product.template",
