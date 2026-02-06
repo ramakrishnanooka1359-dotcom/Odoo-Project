@@ -164,5 +164,5 @@ def set_variant_prices_and_stock(template_id, product_name):
                 "quantity": 100,
             }]
         )
-            )
+            
 
