@@ -14,174 +14,184 @@ odoo = OdooRPC(
 # -------------------------
 
 def get_id(model, field, value):
-    ids = odoo.call(model, "search", [[(field, "=", value)]])
-    if not ids:
-        raise Exception(f"{model} not found: {value}")
-    return ids[0]
+    from odoo_rpc import OdooRPC
+    from config import *
+    import time
 
-def get_stock_location_id():
-    loc = odoo.call(
-        "stock.location",
-        "search_read",
-        [[("complete_name", "=", "Markw/Stock")]],
-        {"fields": ["id"]}
-    )
-    if not loc:
-        raise Exception("Markw/Stock location not found")
-    return loc[0]["id"]
-
-def get_uom_id(logical_name):
-    """
-    Map logical names to actual Odoo UoM names
-    """
-    mapping = {
-        "Liter": "L",
-        "Kilogram": "kg",
-    }
-
-    odoo_name = mapping.get(logical_name)
-    if not odoo_name:
-        raise Exception(f"Unsupported UoM logical name: {logical_name}")
-
-    ids = odoo.call(
-        "uom.uom",
-        "search",
-        [[("name", "=", odoo_name)]]
-    )
-    if not ids:
-        raise Exception(f"uom.uom not found in Odoo: {odoo_name}")
-
-    return ids[0]
-
-# -------------------------
-# Product creation
-# -------------------------
-
-def create_product_template(product_name, uom_name):
-    pack_attr_id = get_id("product.attribute", "name", "Pack Size")
-    uom_id = get_uom_id(uom_name)
-
-    # Decide variant values based on product
-    if product_name.lower() == "milk":
-        pack_values = ["250 ml", "500 ml", "1 L"]
-    else:  # curd & ghee
-        pack_values = ["250 g", "500 g", "1 kg"]
-
-    value_ids = [
-        get_id("product.attribute.value", "name", v)
-        for v in pack_values
-    ]
-
-    template_id = odoo.call(
-        "product.template",
-        "create",
-        [{
-            "name": product_name,
-            "type": "product",
-            "tracking": "lot",
-            "uom_id": uom_id,
-            "uom_po_id": uom_id,
-            "attribute_line_ids": [(0, 0, {
-                "attribute_id": pack_attr_id,
-                "value_ids": [(6, 0, value_ids)]
-            })]
-        }]
+    odoo = OdooRPC(
+        ODOO_URL,
+        ODOO_DB,
+        ODOO_USERNAME,
+        ODOO_PASSWORD
     )
 
-    set_variant_prices_and_stock(template_id, product_name)
-    return template_id
+    # -------------------------------------------------
+    # Helpers
+    # -------------------------------------------------
 
-# -------------------------
-# Variant pricing
-# -------------------------
-def set_variant_prices_and_stock(template_id, product_name):
-    attempts = 5
-    variants = []
+    def get_id(model, field, value):
+        ids = odoo.call(model, "search", [[(field, "=", value)]])
+        if not ids:
+            raise Exception(f"{model} not found: {value}")
+        return ids[0]
 
-    for _ in range(attempts):
+
+    def get_stock_location_id():
+        loc = odoo.call(
+            "stock.location",
+            "search_read",
+            [[("complete_name", "=", "Markw/Stock")]],
+            {"fields": ["id"]}
+        )
+        if not loc:
+            raise Exception("Stock location not found")
+        return loc[0]["id"]
+
+
+    def get_uom_id(logical_name):
+        mapping = {
+            "Liter": "L",
+            "Kilogram": "kg",
+        }
+
+        uom_name = mapping.get(logical_name)
+        if not uom_name:
+            raise Exception(f"Unsupported UoM: {logical_name}")
+
+        return get_id("uom.uom", "name", uom_name)
+
+    # -------------------------------------------------
+    # Product creation
+    # -------------------------------------------------
+
+    def create_product_template(product_name, uom_name):
+        pack_attr_id = get_id("product.attribute", "name", "Pack Size")
+        uom_id = get_uom_id(uom_name)
+
+        # Variant values (HUMAN READABLE – Odoo UI)
+        if product_name.lower() == "milk":
+            pack_values = ["250 ml", "500 ml", "1 L"]
+        else:
+            pack_values = ["250 g", "500 g", "1 kg"]
+
+        value_ids = [
+            get_id("product.attribute.value", "name", v)
+            for v in pack_values
+        ]
+
+        template_id = odoo.call(
+            "product.template",
+            "create",
+            [{
+                "name": product_name,
+                "type": "product",
+                "uom_id": uom_id,
+                "uom_po_id": uom_id,
+                "attribute_line_ids": [(0, 0, {
+                    "attribute_id": pack_attr_id,
+                    "value_ids": [(6, 0, value_ids)]
+                })]
+            }]
+        )
+
+        # -----------------------------
+        # BASE PRICE
+        # -----------------------------
+        BASE_PRICES = {
+            "milk": 20,
+            "curd": 20,
+            "ghee": 100,
+        }
+
+        odoo.call(
+            "product.template",
+            "write",
+            [[template_id], {"list_price": BASE_PRICES[product_name.lower()]}]
+        )
+
+        # Let Odoo generate variants
+        time.sleep(1)
+
+        set_variant_prices_and_stock(template_id, product_name)
+        return template_id
+
+    # -------------------------------------------------
+    # Variant pricing + stock
+    # -------------------------------------------------
+
+    def normalize_key(name):
+        """
+        Converts:
+        '1 L'   -> '1l'
+        '250 ml'-> '250ml'
+        '500 g' -> '500g'
+        """
+        return name.lower().replace(" ", "")
+
+
+    def set_variant_prices_and_stock(template_id, product_name):
+        location_id = get_stock_location_id()
+        pname = product_name.lower()
+
+        # MACHINE-READABLE KEYS
+        PRICE_MAP = {
+            "milk": {
+                "250ml": 0,
+                "500ml": 20,
+                "1l": 60,
+            },
+            "curd": {
+                "250g": 0,
+                "500g": 20,
+                "1kg": 60,
+            },
+            "ghee": {
+                "250g": 0,
+                "500g": 100,
+                "1kg": 300,
+            },
+        }
+
         variants = odoo.call(
             "product.product",
             "search_read",
             [[("product_tmpl_id", "=", template_id)]],
-            {
-                "fields": [
-                    "id",
-                    "name",
-                    "product_template_attribute_value_ids"
-                ]
-            }
-        )
-        if variants:
-            break
-        time.sleep(1)
-
-    if not variants:
-        raise Exception(f"No variants created for template {template_id}")
-
-    location_id = get_stock_location_id()
-
-    for v in variants:
-        attr_ids = v.get("product_template_attribute_value_ids") or []
-
-        vals = odoo.call(
-            "product.template.attribute.value",
-            "read",
-            [attr_ids],
-            {"fields": ["name"]}
+            {"fields": ["id", "product_template_attribute_value_ids"]}
         )
 
-        names = [x["name"].lower() for x in vals]
+        for v in variants:
+            ptav_ids = v["product_template_attribute_value_ids"]
 
-        has_250 = any("250" in n for n in names)
-        has_500 = any("500" in n for n in names)
-        has_1kg_l = any("1" in n for n in names)
+            ptavs = odoo.call(
+                "product.template.attribute.value",
+                "read",
+                [ptav_ids],
+                {"fields": ["id", "name"]}
+            )
 
-        pname = product_name.lower()
+            # -----------------------------
+            # Variant price_extra
+            # -----------------------------
+            for ptav in ptavs:
+                key = normalize_key(ptav["name"])
+                extra_price = PRICE_MAP[pname].get(key, 0)
 
-        # -------- PRICING --------
-        if pname == "milk":
-            if has_250:
-                price = 20
-            elif has_500:
-                price = 40
-            else:
-                price = 80
+                odoo.call(
+                    "product.template.attribute.value",
+                    "write",
+                    [[ptav["id"]], {"price_extra": extra_price}]
+                )
 
-        elif pname == "curd":
-            if has_250:
-                price = 20
-            elif has_500:
-                price = 40
-            else:
-                price = 80
-
-        elif pname == "ghee":
-            if has_250:
-                price = 100
-            elif has_500:
-                price = 200
-            else:
-                price = 400
-        else:
-            price = 0
-
-        # Set price
-        odoo.call(
-            "product.product",
-            "write",
-            [[v["id"]], {"lst_price": price}]
-        )
-
-        # -------- STOCK = 100 --------
-        odoo.call(
-            "stock.quant",
-            "create",
-            [{
-                "product_id": v["id"],
-                "location_id": location_id,
-                "quantity": 100
-            }]
-        )
-
-        print(f"✅ {product_name} | {names} | ₹{price} | Stock=100")
+            # -----------------------------
+            # Stock = 100 per variant
+            # -----------------------------
+            odoo.call(
+                "stock.quant",
+                "create",
+                [{
+                    "product_id": v["id"],
+                    "location_id": location_id,
+                    "quantity": 100,
+                }]
+            )
 
