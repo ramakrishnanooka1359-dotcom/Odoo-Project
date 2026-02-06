@@ -14,9 +14,10 @@ odoo = OdooRPC(
 # -------------------------
 
 def get_id(model, field, value):
-    from odoo_rpc import OdooRPC
-    from config import *
-    import time
+    ids = odoo.call(model, "search", [[(field, "=", value)]])
+    if not ids:
+        raise Exception(f"{model} not found: {value}")
+    return ids[0]
 
     odoo = OdooRPC(
         ODOO_URL,
