@@ -1,6 +1,7 @@
 from odoo_rpc import OdooRPC
 from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_PASSWORD
 import time
+from datetime import date, timedelta
 
 # =================================================
 # Odoo connection
