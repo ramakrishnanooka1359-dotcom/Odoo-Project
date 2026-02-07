@@ -59,7 +59,7 @@ def normalize_key(name):
     return name.upper().replace(" ", "")
 
 # =================================================
-# LOT HELPERS (NEW)
+# LOT HELPERS (FIXED)
 # =================================================
 
 def enable_lot_tracking(template_id):
@@ -70,10 +70,8 @@ def enable_lot_tracking(template_id):
     )
 
 
+# 🔧 CHANGE 1: return (lot_id, is_new_lot)
 def create_lot(product_id, lot_name, expiry_date):
-    """
-    Create lot if not exists (idempotent)
-    """
     lot_ids = odoo.call(
         "stock.lot",
         "search",
@@ -81,9 +79,9 @@ def create_lot(product_id, lot_name, expiry_date):
     )
 
     if lot_ids:
-        return lot_ids[0]
+        return lot_ids[0], False   # ❌ existing lot
 
-    return odoo.call(
+    lot_id = odoo.call(
         "stock.lot",
         "create",
         [{
@@ -92,6 +90,8 @@ def create_lot(product_id, lot_name, expiry_date):
             "expiration_date": expiry_date,
         }]
     )
+
+    return lot_id, True           # ✅ new lot
 
 
 def set_stock_with_lot(product_id, location_id, lot_id, quantity):
@@ -182,7 +182,6 @@ def set_variant_prices_stock_and_lots(template_id, product_name):
         "paneer": {"250G": -120, "500G": 0, "1KG": 240},
     }
 
-    # Manufacture date (fixed)
     mfg_date = date(2026, 2, 7)
 
     EXPIRY_DAYS = {
@@ -225,13 +224,18 @@ def set_variant_prices_stock_and_lots(template_id, product_name):
         )
 
         lot_name = f"{sku}-{mfg_date.strftime('%Y%m%d')}"
-        lot_id = create_lot(variant["id"], lot_name, expiry_date)
+        lot_id, is_new_lot = create_lot(variant["id"], lot_name, expiry_date)
 
-        set_stock_with_lot(
-            variant["id"], location_id, lot_id, 100
+        # 🔧 CHANGE 2: stock ONLY when lot is new
+        if is_new_lot:
+            set_stock_with_lot(
+                variant["id"], location_id, lot_id, 100
+            )
+
+        print(
+            f"✅ {sku} | LOT={lot_name} | EXP={expiry_date} | "
+            f"{'STOCK SET' if is_new_lot else 'STOCK UNCHANGED'}"
         )
-
-        print(f"✅ {sku} | LOT={lot_name} | EXP={expiry_date}")
 
 # =================================================
 # Script execution
