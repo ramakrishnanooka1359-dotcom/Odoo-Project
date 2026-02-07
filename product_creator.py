@@ -52,27 +52,56 @@ def get_uom_id(logical_name):
         "Liter": "L",
         "Kilogram": "kg",
     }
-    uom_name = mapping.get(logical_name)
-    if not uom_name:
-        raise Exception(f"Unsupported UoM: {logical_name}")
-    return get_id("uom.uom", "name", uom_name)
+    return get_id("uom.uom", "name", mapping[logical_name])
 
 
 def normalize_key(name):
     return name.upper().replace(" ", "")
 
+# =================================================
+# LOT HELPERS (NEW)
+# =================================================
 
-def set_stock_exact(product_id, location_id, quantity):
+def enable_lot_tracking(template_id):
+    odoo.call(
+        "product.template",
+        "write",
+        [[template_id], {"tracking": "lot"}]
+    )
+
+
+def create_lot(product_id, lot_name, expiry_date):
     """
-    Ensure EXACT stock quantity for a product at a location.
-    Safe to run multiple times (no duplication).
+    Create lot if not exists (idempotent)
     """
+    lot_ids = odoo.call(
+        "stock.lot",
+        "search",
+        [[("name", "=", lot_name), ("product_id", "=", product_id)]]
+    )
+
+    if lot_ids:
+        return lot_ids[0]
+
+    return odoo.call(
+        "stock.lot",
+        "create",
+        [{
+            "name": lot_name,
+            "product_id": product_id,
+            "expiration_date": expiry_date,
+        }]
+    )
+
+
+def set_stock_with_lot(product_id, location_id, lot_id, quantity):
     quant_ids = odoo.call(
         "stock.quant",
         "search",
         [[
             ("product_id", "=", product_id),
             ("location_id", "=", location_id),
+            ("lot_id", "=", lot_id),
         ]]
     )
 
@@ -89,6 +118,7 @@ def set_stock_exact(product_id, location_id, quantity):
             [{
                 "product_id": product_id,
                 "location_id": location_id,
+                "lot_id": lot_id,
                 "quantity": quantity,
             }]
         )
@@ -103,15 +133,10 @@ def create_or_update_product_template(product_name, uom_name):
 
     template_id = get_product_template_by_name(product_name)
 
-    if product_name.lower() == "milk":
-        pack_values = ["250 ml", "500 ml", "1 L"]
-    else:
-        pack_values = ["250 g", "500 g", "1 kg"]
+    pack_values = ["250 ml", "500 ml", "1 L"] if product_name.lower() == "milk" \
+        else ["250 g", "500 g", "1 kg"]
 
-    value_ids = [
-        get_id("product.attribute.value", "name", v)
-        for v in pack_values
-    ]
+    value_ids = [get_id("product.attribute.value", "name", v) for v in pack_values]
 
     BASE_PRICES = {
         "milk": 20,
@@ -120,19 +145,7 @@ def create_or_update_product_template(product_name, uom_name):
         "paneer": 240,
     }
 
-    if template_id:
-        print(f"🔁 Updating product: {product_name}")
-        odoo.call(
-            "product.template",
-            "write",
-            [[template_id], {
-                "uom_id": uom_id,
-                "uom_po_id": uom_id,
-                "list_price": BASE_PRICES[product_name.lower()],
-            }]
-        )
-    else:
-        print(f"🆕 Creating product: {product_name}")
+    if not template_id:
         template_id = odoo.call(
             "product.template",
             "create",
@@ -143,50 +156,43 @@ def create_or_update_product_template(product_name, uom_name):
                 "uom_po_id": uom_id,
                 "list_price": BASE_PRICES[product_name.lower()],
                 "attribute_line_ids": [(
-                    0, 0, {
-                        "attribute_id": pack_attr_id,
-                        "value_ids": [(6, 0, value_ids)]
-                    }
+                    0, 0,
+                    {"attribute_id": pack_attr_id, "value_ids": [(6, 0, value_ids)]}
                 )]
             }]
         )
 
+    enable_lot_tracking(template_id)
     time.sleep(1)
-    set_variant_prices_stock_and_sku(template_id, product_name)
-
-    return template_id
+    set_variant_prices_stock_and_lots(template_id, product_name)
 
 # =================================================
-# Variant pricing + stock + SKU
+# Variant pricing + LOT + EXPIRY + STOCK
 # =================================================
 
-def set_variant_prices_stock_and_sku(template_id, product_name):
+def set_variant_prices_stock_and_lots(template_id, product_name):
     location_id = get_stock_location_id()
     pname = product_name.lower()
     pname_code = product_name.upper()
 
     PRICE_MAP = {
-        "milk": {
-            "250ML": 0,
-            "500ML": 20,
-            "1L": 60,
-        },
-        "curd": {
-            "250G": 0,
-            "500G": 20,
-            "1KG": 60,
-        },
-        "ghee": {
-            "250G": 0,
-            "500G": 100,
-            "1KG": 300,
-        },
-        "paneer": {
-            "250G": -120,
-            "500G": 0,
-            "1KG": 240,
-        },
+        "milk": {"250ML": 0, "500ML": 20, "1L": 60},
+        "curd": {"250G": 0, "500G": 20, "1KG": 60},
+        "ghee": {"250G": 0, "500G": 100, "1KG": 300},
+        "paneer": {"250G": -120, "500G": 0, "1KG": 240},
     }
+
+    # Manufacture date (fixed)
+    mfg_date = date(2026, 2, 7)
+
+    EXPIRY_DAYS = {
+        "milk": 7,
+        "curd": 7,
+        "paneer": 10,
+        "ghee": 365,
+    }
+
+    expiry_date = (mfg_date + timedelta(days=EXPIRY_DAYS[pname])).isoformat()
 
     variants = odoo.call(
         "product.product",
@@ -196,23 +202,19 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
     )
 
     for variant in variants:
-        ptav_ids = variant["product_template_attribute_value_ids"]
-
-        ptavs = odoo.call(
+        ptav = odoo.call(
             "product.template.attribute.value",
             "read",
-            [ptav_ids],
+            [variant["product_template_attribute_value_ids"]],
             {"fields": ["id", "name"]}
-        )
+        )[0]
 
-        size_name = ptavs[0]["name"]
-        size_key = normalize_key(size_name)
+        size_key = normalize_key(ptav["name"])
 
-        extra = PRICE_MAP[pname].get(size_key, 0)
         odoo.call(
             "product.template.attribute.value",
             "write",
-            [[ptavs[0]["id"]], {"price_extra": extra}]
+            [[ptav["id"]], {"price_extra": PRICE_MAP[pname][size_key]}]
         )
 
         sku = f"{pname_code}-{size_key}"
@@ -222,13 +224,17 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
             [[variant["id"]], {"default_code": sku}]
         )
 
-        # ✅ SAFE STOCK SET (NO DUPLICATION)
-        set_stock_exact(variant["id"], location_id, 100)
+        lot_name = f"{sku}-{mfg_date.strftime('%Y%m%d')}"
+        lot_id = create_lot(variant["id"], lot_name, expiry_date)
 
-        print(f"✅ {product_name} | {size_name} | SKU={sku}")
+        set_stock_with_lot(
+            variant["id"], location_id, lot_id, 100
+        )
+
+        print(f"✅ {sku} | LOT={lot_name} | EXP={expiry_date}")
 
 # =================================================
-# Script execution (THIS IS REQUIRED)
+# Script execution
 # =================================================
 
 if __name__ == "__main__":
@@ -236,7 +242,7 @@ if __name__ == "__main__":
         ("Milk", "Liter"),
         ("Curd", "Kilogram"),
         ("Ghee", "Kilogram"),
-        ("Paneer", "Kilogram"),   
+        ("Paneer", "Kilogram"),
     ]
 
     for name, uom in PRODUCTS:
