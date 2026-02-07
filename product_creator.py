@@ -60,6 +60,38 @@ def get_uom_id(logical_name):
 def normalize_key(name):
     return name.upper().replace(" ", "")
 
+
+def set_stock_exact(product_id, location_id, quantity):
+    """
+    Ensure EXACT stock quantity for a product at a location.
+    Safe to run multiple times (no duplication).
+    """
+    quant_ids = odoo.call(
+        "stock.quant",
+        "search",
+        [[
+            ("product_id", "=", product_id),
+            ("location_id", "=", location_id),
+        ]]
+    )
+
+    if quant_ids:
+        odoo.call(
+            "stock.quant",
+            "write",
+            [quant_ids, {"quantity": quantity}]
+        )
+    else:
+        odoo.call(
+            "stock.quant",
+            "create",
+            [{
+                "product_id": product_id,
+                "location_id": location_id,
+                "quantity": quantity,
+            }]
+        )
+
 # =================================================
 # Product creation
 # =================================================
@@ -68,7 +100,6 @@ def create_or_update_product_template(product_name, uom_name):
     pack_attr_id = get_id("product.attribute", "name", "Pack Size")
     uom_id = get_uom_id(uom_name)
 
-    # Try to find existing product
     template_id = get_product_template_by_name(product_name)
 
     if product_name.lower() == "milk":
@@ -85,12 +116,11 @@ def create_or_update_product_template(product_name, uom_name):
         "milk": 20,
         "curd": 20,
         "ghee": 100,
+        "paneer": 120,
     }
 
     if template_id:
-        # ✅ UPDATE existing product
         print(f"🔁 Updating product: {product_name}")
-
         odoo.call(
             "product.template",
             "write",
@@ -100,11 +130,8 @@ def create_or_update_product_template(product_name, uom_name):
                 "list_price": BASE_PRICES[product_name.lower()],
             }]
         )
-
     else:
-        # 🆕 CREATE new product
         print(f"🆕 Creating product: {product_name}")
-
         template_id = odoo.call(
             "product.template",
             "create",
@@ -123,7 +150,6 @@ def create_or_update_product_template(product_name, uom_name):
             }]
         )
 
-    # Always update variants, prices, stock, SKU
     time.sleep(1)
     set_variant_prices_stock_and_sku(template_id, product_name)
 
@@ -154,6 +180,11 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
             "500G": 100,
             "1KG": 300,
         },
+        "paneer": {
+            "250G": 0,
+            "500G": 120,
+            "1KG": 240,
+        },
     }
 
     variants = odoo.call(
@@ -176,7 +207,6 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
         size_name = ptavs[0]["name"]
         size_key = normalize_key(size_name)
 
-        # price extra
         extra = PRICE_MAP[pname].get(size_key, 0)
         odoo.call(
             "product.template.attribute.value",
@@ -184,7 +214,6 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
             [[ptavs[0]["id"]], {"price_extra": extra}]
         )
 
-        # internal reference
         sku = f"{pname_code}-{size_key}"
         odoo.call(
             "product.product",
@@ -192,15 +221,22 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
             [[variant["id"]], {"default_code": sku}]
         )
 
-        # stock
-        odoo.call(
-            "stock.quant",
-            "create",
-            [{
-                "product_id": variant["id"],
-                "location_id": location_id,
-                "quantity": 100,
-            }]
-        )
+        # ✅ SAFE STOCK SET (NO DUPLICATION)
+        set_stock_exact(variant["id"], location_id, 100)
 
         print(f"✅ {product_name} | {size_name} | SKU={sku}")
+
+# =================================================
+# Script execution (THIS IS REQUIRED)
+# =================================================
+
+if __name__ == "__main__":
+    PRODUCTS = [
+        ("Milk", "Liter"),
+        ("Curd", "Kilogram"),
+        ("Ghee", "Kilogram"),
+        ("Paneer", "Kilogram"),   
+    ]
+
+    for name, uom in PRODUCTS:
+        create_or_update_product_template(name, uom)
