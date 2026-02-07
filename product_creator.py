@@ -116,7 +116,7 @@ def create_or_update_product_template(product_name, uom_name):
         "milk": 20,
         "curd": 20,
         "ghee": 100,
-        "paneer": 120,
+        "paneer": 240,
     }
 
     if template_id:
@@ -181,8 +181,8 @@ def set_variant_prices_stock_and_sku(template_id, product_name):
             "1KG": 300,
         },
         "paneer": {
-            "250G": 0,
-            "500G": 120,
+            "250G": -120,
+            "500G": 0,
             "1KG": 240,
         },
     }
