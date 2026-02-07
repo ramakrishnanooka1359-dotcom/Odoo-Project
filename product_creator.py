@@ -36,6 +36,16 @@ def get_stock_location_id():
     return loc[0]["id"]
 
 
+def get_product_template_by_name(name):
+    ids = odoo.call(
+        "product.template",
+        "search",
+        [[("name", "=", name)]],
+        {"limit": 1}
+    )
+    return ids[0] if ids else None
+
+
 def get_uom_id(logical_name):
     mapping = {
         "Liter": "L",
@@ -54,9 +64,12 @@ def normalize_key(name):
 # Product creation
 # =================================================
 
-def create_product_template(product_name, uom_name):
+def create_or_update_product_template(product_name, uom_name):
     pack_attr_id = get_id("product.attribute", "name", "Pack Size")
     uom_id = get_uom_id(uom_name)
+
+    # Try to find existing product
+    template_id = get_product_template_by_name(product_name)
 
     if product_name.lower() == "milk":
         pack_values = ["250 ml", "500 ml", "1 L"]
@@ -68,35 +81,49 @@ def create_product_template(product_name, uom_name):
         for v in pack_values
     ]
 
-    template_id = odoo.call(
-        "product.template",
-        "create",
-        [{
-            "name": product_name,
-            "type": "product",
-            "uom_id": uom_id,
-            "uom_po_id": uom_id,
-            "attribute_line_ids": [(
-                0, 0, {
-                    "attribute_id": pack_attr_id,
-                    "value_ids": [(6, 0, value_ids)]
-                }
-            )]
-        }]
-    )
-
     BASE_PRICES = {
         "milk": 20,
         "curd": 20,
         "ghee": 100,
     }
 
-    odoo.call(
-        "product.template",
-        "write",
-        [[template_id], {"list_price": BASE_PRICES[product_name.lower()]}]
-    )
+    if template_id:
+        # ✅ UPDATE existing product
+        print(f"🔁 Updating product: {product_name}")
 
+        odoo.call(
+            "product.template",
+            "write",
+            [[template_id], {
+                "uom_id": uom_id,
+                "uom_po_id": uom_id,
+                "list_price": BASE_PRICES[product_name.lower()],
+            }]
+        )
+
+    else:
+        # 🆕 CREATE new product
+        print(f"🆕 Creating product: {product_name}")
+
+        template_id = odoo.call(
+            "product.template",
+            "create",
+            [{
+                "name": product_name,
+                "type": "product",
+                "uom_id": uom_id,
+                "uom_po_id": uom_id,
+                "list_price": BASE_PRICES[product_name.lower()],
+                "attribute_line_ids": [(
+                    0, 0, {
+                        "attribute_id": pack_attr_id,
+                        "value_ids": [(6, 0, value_ids)]
+                    }
+                )]
+            }]
+        )
+
+    # Always update variants, prices, stock, SKU
     time.sleep(1)
     set_variant_prices_stock_and_sku(template_id, product_name)
 
