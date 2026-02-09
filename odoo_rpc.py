@@ -1,11 +1,11 @@
 import requests
 
 class OdooRPC:
-    def __init__(self, url, db, username, password):
+    def __init__(self, url, db, username, api_key):
         self.url = url
         self.db = db
         self.username = username
-        self.password = password
+        self.api_key = api_key
         self.uid = self.authenticate()
 
     def authenticate(self):
@@ -15,25 +15,25 @@ class OdooRPC:
             "params": {
                 "service": "common",
                 "method": "authenticate",
-                "args": [self.db, self.username, self.password, {}]
+                "args": [
+                    self.db,
+                    self.username,
+                    self.api_key,
+                    {}
+                ]
             },
             "id": 1
         }
 
-        response = requests.post(
-            f"{self.url}/jsonrpc",
-            json=payload
-        ).json()
-
-        print("🔍 AUTH RESPONSE FROM ODOO:")
-        print(response)
+        response = requests.post(f"{self.url}/jsonrpc", json=payload).json()
 
         if not response.get("result"):
-            raise Exception("❌ Odoo login failed")
+            raise Exception("❌ Authentication failed")
 
+        print("✅ Authenticated. UID:", response["result"])
         return response["result"]
 
-    def call(self, model, method, args, kwargs=None):
+    def call(self, model, method, args=None, kwargs=None):
         payload = {
             "jsonrpc": "2.0",
             "method": "call",
@@ -43,16 +43,19 @@ class OdooRPC:
                 "args": [
                     self.db,
                     self.uid,
-                    self.password,
+                    self.api_key,
                     model,
                     method,
-                    args,
+                    args or [],
                     kwargs or {}
                 ]
             },
             "id": 2
         }
+
         response = requests.post(f"{self.url}/jsonrpc", json=payload).json()
+
         if "error" in response:
             raise Exception(response["error"])
+
         return response["result"]
