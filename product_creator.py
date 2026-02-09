@@ -1,5 +1,5 @@
 from odoo_rpc import OdooRPC
-from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_PASSWORD
+from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY
 import time
 from datetime import date, timedelta
 
@@ -11,7 +11,7 @@ odoo = OdooRPC(
     ODOO_URL,
     ODOO_DB,
     ODOO_USERNAME,
-    ODOO_PASSWORD
+    ODOO_API_KEY
 )
 
 # =================================================
@@ -210,11 +210,7 @@ def set_variant_prices_stock_and_lots(template_id, product_name):
 
         size_key = normalize_key(ptav["name"])
 
-        odoo.call(
-            "product.template.attribute.value",
-            "write",
-            [[ptav["id"]], {"price_extra": PRICE_MAP[pname][size_key]}]
-        )
+
 
         sku = f"{pname_code}-{size_key}"
         odoo.call(

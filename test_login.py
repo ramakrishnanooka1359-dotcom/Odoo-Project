@@ -5,7 +5,7 @@ odoo = OdooRPC(
     ODOO_URL,
     ODOO_DB,
     ODOO_USERNAME,
-    ODOO_PASSWORD
+    ODOO_API_KEY
 )
 
 print("✅ Connected to Odoo, UID:", odoo.uid)
