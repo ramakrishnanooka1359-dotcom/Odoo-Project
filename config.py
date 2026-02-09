@@ -1,5 +1,3 @@
-# Odoo connection configuration
-
 ODOO_URL = "http://54.157.185.157:8069"
 ODOO_DB = "Odoo-Inventory"
 ODOO_USERNAME = "nookaramakrishna6789@gmail.com"
