@@ -34,6 +34,69 @@ def fetch_products():
     )
 
 
+def fetch_products_with_lots():
+    """
+    Fetch products + variants + prices + LOT numbers + expiry + stock
+    """
+    odoo = OdooRPC(
+        ODOO_URL,
+        ODOO_DB,
+        ODOO_USERNAME,
+        ODOO_API_KEY
+    )
+
+    products = odoo.call(
+        "product.product",
+        "search_read",
+        [[]],
+        {
+            "fields": [
+                "id",
+                "name",
+                "default_code",
+                "lst_price",
+                "qty_available"
+            ]
+        }
+    )
+
+    result = []
+
+    for p in products:
+        quants = odoo.call(
+            "stock.quant",
+            "search_read",
+            [[("product_id", "=", p["id"]), ("quantity", ">", 0)]],
+            {"fields": ["quantity", "lot_id"]}
+        )
+
+        lots = []
+        for q in quants:
+            if q["lot_id"]:
+                lot = odoo.call(
+                    "stock.lot",
+                    "read",
+                    [[q["lot_id"][0]]],
+                    {"fields": ["name", "expiration_date"]}
+                )[0]
+
+                lots.append({
+                    "lot_number": lot["name"],
+                    "expiry_date": lot["expiration_date"],
+                    "quantity": q["quantity"]
+                })
+
+        result.append({
+            "product": p["name"],
+            "sku": p["default_code"],
+            "price": p["lst_price"],
+            "total_stock": p["qty_available"],
+            "lots": lots
+        })
+
+    return result
+
+
 # -------------------------
 # SYNC PRODUCTS (Admin)
 # -------------------------
