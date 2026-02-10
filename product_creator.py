@@ -1,5 +1,5 @@
 from odoo_rpc import OdooRPC
-from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY
+from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY, MARKWAVE_LOCATION_ID, VARIANT_PRICES
 import time
 from datetime import date, timedelta
 
@@ -26,15 +26,8 @@ def get_id(model, field, value):
 
 
 def get_stock_location_id():
-    loc = odoo.call(
-        "stock.location",
-        "search_read",
-        [[("complete_name", "=", "Markw/Stock")]],
-        {"fields": ["id"]}
-    )
-    if not loc:
-        raise Exception("Stock location not found")
-    return loc[0]["id"]
+    """Return the configured Markwave stock location ID"""
+    return MARKWAVE_LOCATION_ID
 
 
 def get_product_template_by_name(name):
@@ -95,6 +88,13 @@ def create_lot(product_id, lot_name, expiry_date):
 
 
 def set_stock_with_lot(product_id, location_id, lot_id, quantity):
+    """
+    Idempotent stock setter:
+    - If quant exists → SET quantity
+    - If not → CREATE once
+    - Safe to re-run unlimited times
+    """
+
     quant_ids = odoo.call(
         "stock.quant",
         "search",
@@ -102,14 +102,15 @@ def set_stock_with_lot(product_id, location_id, lot_id, quantity):
             ("product_id", "=", product_id),
             ("location_id", "=", location_id),
             ("lot_id", "=", lot_id),
-        ]]
+        ]],
+        {"limit": 1}
     )
 
     if quant_ids:
         odoo.call(
             "stock.quant",
             "write",
-            [quant_ids, {"quantity": quantity}]
+            [[quant_ids[0]], {"quantity": quantity}]
         )
     else:
         odoo.call(
@@ -120,6 +121,7 @@ def set_stock_with_lot(product_id, location_id, lot_id, quantity):
                 "location_id": location_id,
                 "lot_id": lot_id,
                 "quantity": quantity,
+                "company_id": 2,  # 🔒 Markwave only
             }]
         )
 
@@ -139,10 +141,10 @@ def create_or_update_product_template(product_name, uom_name):
     value_ids = [get_id("product.attribute.value", "name", v) for v in pack_values]
 
     BASE_PRICES = {
-        "milk": 20,
-        "curd": 20,
-        "ghee": 100,
-        "paneer": 240,
+        "milk": 0,
+        "curd": 0,
+        "ghee": 0,
+        "paneer": 0,
     }
 
     if not template_id:
@@ -154,7 +156,7 @@ def create_or_update_product_template(product_name, uom_name):
                 "type": "product",
                 "uom_id": uom_id,
                 "uom_po_id": uom_id,
-                "list_price": BASE_PRICES[product_name.lower()],
+                "list_price": 0.0,
                 "attribute_line_ids": [(
                     0, 0,
                     {"attribute_id": pack_attr_id, "value_ids": [(6, 0, value_ids)]}
@@ -163,6 +165,14 @@ def create_or_update_product_template(product_name, uom_name):
         )
 
     enable_lot_tracking(template_id)
+
+    # ✅ FIX 2 — FORCE base price = 0 (even for existing products)
+    odoo.call(
+        "product.template",
+        "write",
+        [[template_id], {"list_price": 0.0}]
+    )
+
     time.sleep(1)
     set_variant_prices_stock_and_lots(template_id, product_name)
 
@@ -175,12 +185,6 @@ def set_variant_prices_stock_and_lots(template_id, product_name):
     pname = product_name.lower()
     pname_code = product_name.upper()
 
-    PRICE_MAP = {
-        "milk": {"250ML": 0, "500ML": 20, "1L": 60},
-        "curd": {"250G": 0, "500G": 20, "1KG": 60},
-        "ghee": {"250G": 0, "500G": 100, "1KG": 300},
-        "paneer": {"250G": -120, "500G": 0, "1KG": 240},
-    }
 
     mfg_date = date(2026, 2, 7)
 
@@ -210,27 +214,30 @@ def set_variant_prices_stock_and_lots(template_id, product_name):
 
         size_key = normalize_key(ptav["name"])
 
-
-
         sku = f"{pname_code}-{size_key}"
+        
+        # Get price from VARIANT_PRICES config
+        variant_price = VARIANT_PRICES.get(sku, 0)
+        
+        # Update variant with SKU and price
         odoo.call(
             "product.product",
             "write",
-            [[variant["id"]], {"default_code": sku}]
+            [[variant["id"]], {
+                "default_code": sku,
+                "lst_price": variant_price
+            }]
         )
 
         lot_name = f"{sku}-{mfg_date.strftime('%Y%m%d')}"
-        lot_id, is_new_lot = create_lot(variant["id"], lot_name, expiry_date)
+        lot_id, _ = create_lot(variant["id"], lot_name, expiry_date)
 
-        # 🔧 CHANGE 2: stock ONLY when lot is new
-        if is_new_lot:
-            set_stock_with_lot(
-                variant["id"], location_id, lot_id, 100
-            )
+        set_stock_with_lot(
+            variant["id"], location_id, lot_id, 1000
+        )
 
         print(
-            f"✅ {sku} | LOT={lot_name} | EXP={expiry_date} | "
-            f"{'STOCK SET' if is_new_lot else 'STOCK UNCHANGED'}"
+            f"✅ {sku} | PRICE=₹{variant_price} | LOT={lot_name} | EXP={expiry_date}"
         )
 
 # =================================================

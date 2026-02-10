@@ -1,5 +1,5 @@
 from odoo_rpc import OdooRPC
-from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY
+from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY, MARKWAVE_COMPANY_ID, VARIANT_PRICES
 from product_creator import create_or_update_product_template
 
 
@@ -108,3 +108,41 @@ def create_all_products():
     create_or_update_product_template("Curd", "Kilogram")
     create_or_update_product_template("Ghee", "Kilogram")
     create_or_update_product_template("Paneer", "Kilogram")
+
+
+def update_variant_prices():
+    """
+    Update prices for all product variants based on VARIANT_PRICES config
+    Filters by MARKWAVE_COMPANY_ID to only update Markwave products
+    """
+    odoo = OdooRPC(
+        ODOO_URL,
+        ODOO_DB,
+        ODOO_USERNAME,
+        ODOO_API_KEY
+    )
+
+    for default_code, price in VARIANT_PRICES.items():
+        products = odoo.call(
+            "product.product",
+            "search",
+            [[
+                ("default_code", "=", default_code),
+                ("company_id", "=", MARKWAVE_COMPANY_ID),
+            ]]
+        )
+
+        if not products:
+            print(f"⚠️ Variant not found: {default_code}")
+            continue
+
+        product_id = products[0]
+
+        odoo.call(
+            "product.product",
+            "write",
+            [[product_id], {"lst_price": price}]
+        )
+
+        print(f"✅ Updated price: {default_code} → ₹{price}")
+
