@@ -1,6 +1,15 @@
-config.py
+# Virtual environment
 venv/
+
+# Python cache
 __pycache__/
-test_login.py
+*.pyc
+
+# Environment file
+.env
+
+# Swap files
 *.swp
-config.py
+
+# Optional test file
+test_login.py
