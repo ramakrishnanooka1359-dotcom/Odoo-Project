@@ -9,8 +9,9 @@ ODOO_USERNAME = "nookaramakrishna6789@gmail.com"
 
 ODOO_API_KEY = os.getenv("ODOO_API_KEY")
 
-# Markwave configuration
+# Company IDs
 MARKWAVE_COMPANY_ID = 2
+ANIMAL_KART_COMPANY_ID = 7
 MARKWAVE_LOCATION_ID = 22
 
 # Product variant pricing

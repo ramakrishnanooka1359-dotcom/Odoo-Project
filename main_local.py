@@ -1,13 +1,13 @@
 from fastapi import FastAPI
-from products import fetch_products_with_lots, create_all_products, fetch_animal_kart_products_with_locations
+from products import fetch_products_with_lots
 from config import MARKWAVE_COMPANY_ID, ANIMAL_KART_COMPANY_ID
 
-app = FastAPI(title="Multi Company Odoo API")
+app = FastAPI(title="Multi Company Odoo API - LOCAL")
 
 
 @app.get("/")
 def health():
-    return {"status": "running"}
+    return {"status": "running locally"}
 
 
 # ==========================
@@ -23,4 +23,4 @@ def get_markwave_products():
 # ==========================
 @app.get("/animal-kart/products")
 def get_animal_kart_products():
-    return fetch_animal_kart_products_with_locations()
+    return fetch_products_with_lots(ANIMAL_KART_COMPANY_ID)

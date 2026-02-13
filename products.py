@@ -1,12 +1,12 @@
 from odoo_rpc import OdooRPC
-from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY, MARKWAVE_COMPANY_ID, VARIANT_PRICES
+from config import ODOO_URL, ODOO_DB, ODOO_USERNAME, ODOO_API_KEY, MARKWAVE_COMPANY_ID, ANIMAL_KART_COMPANY_ID, VARIANT_PRICES
 from product_creator import create_or_update_product_template
 
 
 # -------------------------
 # READ PRODUCTS (Frontend)
 # -------------------------
-def fetch_products():
+def fetch_products(company_id: int):
     """
     Fetch product VARIANTS from Odoo using JSON-RPC
     """
@@ -20,23 +20,33 @@ def fetch_products():
     return odoo.call(
         model="product.product",
         method="search_read",
-        args=[[]],
+        args=[[
+            ("company_id", "=", company_id),
+            ("type", "=", "product"),
+            ("sale_ok", "=", True)
+        ]],
         kwargs={
             "fields": [
                 "id",
-                "name",
+                "display_name",
                 "default_code",
-                "list_price",
-                "qty_available"
+                "barcode",
+                "lst_price",
+                "standard_price",
+                "qty_available",
+                "product_template_attribute_value_ids"
             ],
+            "context": {
+                "allowed_company_ids": [company_id]
+            },
             "limit": 100
         }
     )
 
 
-def fetch_products_with_lots():
+def fetch_products_with_lots(company_id: int):
     """
-    Fetch products + variants + prices + LOT numbers + expiry + stock
+    Fetch storable products for a specific company
     """
     odoo = OdooRPC(
         ODOO_URL,
@@ -45,29 +55,50 @@ def fetch_products_with_lots():
         ODOO_API_KEY
     )
 
+    # ✅ Fetch only storable products for specific company
     products = odoo.call(
         "product.product",
         "search_read",
-        [[]],
+        [[
+            ("type", "=", "product"),        # Only Storable
+            ("sale_ok", "=", True),
+            ("company_id", "=", company_id)
+        ]],
         {
             "fields": [
                 "id",
-                "name",
+                "display_name",
                 "default_code",
+                "barcode",
                 "lst_price",
-                "qty_available"
-            ]
+                "standard_price",
+                "qty_available",
+                "product_template_attribute_value_ids"
+            ],
+            "context": {
+                "allowed_company_ids": [company_id]
+            }
         }
     )
 
     result = []
 
     for p in products:
+        # ✅ Filter stock quants by company
         quants = odoo.call(
             "stock.quant",
             "search_read",
-            [[("product_id", "=", p["id"]), ("quantity", ">", 0)]],
-            {"fields": ["quantity", "lot_id"]}
+            [[
+                ("product_id", "=", p["id"]),
+                ("quantity", ">", 0),
+                ("company_id", "=", company_id)
+            ]],
+            {
+                "fields": ["quantity", "lot_id"],
+                "context": {
+                    "allowed_company_ids": [company_id]
+                }
+            }
         )
 
         lots = []
@@ -77,7 +108,12 @@ def fetch_products_with_lots():
                     "stock.lot",
                     "read",
                     [[q["lot_id"][0]]],
-                    {"fields": ["name", "expiration_date"]}
+                    {
+                        "fields": ["name", "expiration_date"],
+                        "context": {
+                            "allowed_company_ids": [company_id]
+                        }
+                    }
                 )[0]
 
                 lots.append({
@@ -87,9 +123,11 @@ def fetch_products_with_lots():
                 })
 
         result.append({
-            "product": p["name"],
+            "product": p["display_name"],
             "sku": p["default_code"],
+            "barcode": p.get("barcode"),
             "price": p["lst_price"],
+            "cost_price": p.get("standard_price"),
             "total_stock": p["qty_available"],
             "lots": lots
         })
@@ -144,5 +182,85 @@ def update_variant_prices():
             [[product_id], {"lst_price": price}]
         )
 
+
         print(f"✅ Updated price: {default_code} → ₹{price}")
+
+
+def fetch_animal_kart_products_with_locations():
+    """
+    Fetch Animal Kart products with location-wise stock
+    """
+
+    odoo = OdooRPC(
+        ODOO_URL,
+        ODOO_DB,
+        ODOO_USERNAME,
+        ODOO_API_KEY
+    )
+
+    # Step 1: Get Animal Kart products (storable only)
+    products = odoo.call(
+        "product.product",
+        "search_read",
+        [[
+            ("company_id", "=", ANIMAL_KART_COMPANY_ID),
+            ("type", "=", "product")
+        ]],
+        {
+            "fields": [
+                "id",
+                "display_name",
+                "default_code",
+                "barcode",
+                "lst_price",
+                "standard_price",
+                "qty_available"
+            ],
+            "context": {
+                "allowed_company_ids": [ANIMAL_KART_COMPANY_ID]
+            }
+        }
+    )
+
+    result = []
+
+    # Step 2: For each product get stock by location
+    for p in products:
+
+        quants = odoo.call(
+            "stock.quant",
+            "search_read",
+            [[
+                ("product_id", "=", p["id"]),
+                ("company_id", "=", ANIMAL_KART_COMPANY_ID),
+                ("quantity", ">", 0)
+            ]],
+            {
+                "fields": ["quantity", "location_id"],
+                "context": {
+                    "allowed_company_ids": [ANIMAL_KART_COMPANY_ID]
+                }
+            }
+        )
+
+        locations = []
+
+        for q in quants:
+            if q["location_id"]:
+                locations.append({
+                    "location_name": q["location_id"][1],
+                    "quantity": q["quantity"]
+                })
+
+        result.append({
+            "product": p["display_name"],
+            "sku": p["default_code"],
+            "barcode": p.get("barcode"),
+            "price": p["lst_price"],
+            "cost_price": p.get("standard_price"),
+            "total_stock": p["qty_available"],
+            "locations": locations
+        })
+
+    return result
 
