@@ -233,6 +233,8 @@ def fetch_animal_kart_products_with_locations():
             [[
                 ("product_id", "=", p["id"]),
                 ("company_id", "=", ANIMAL_KART_COMPANY_ID),
+                ("location_id.usage", "=", "internal"),
+                ("location_id.active", "=", True),
                 ("quantity", ">", 0)
             ]],
             {
